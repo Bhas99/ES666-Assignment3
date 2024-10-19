@@ -95,15 +95,17 @@ class PanaromaStitcher():
 
         # Warp the first image and blend it with the warped second image
         result_img = cv2.warpPerspective(img1, translation @ H, (xmax - xmin, ymax - ymin))
-        result_img[-ymin:h2 - ymin, -xmin:w2 - xmin] = img2
+
+        # Create a mask to avoid overwriting the first image
+        mask = np.zeros((ymax - ymin, xmax - xmin), dtype=np.uint8)
+        mask[-ymin:h2 - ymin, -xmin:w2 - xmin] = 255
+
+        # Use bitwise OR to combine the images based on non-zero mask region
+        result_img[-ymin:h2 - ymin, -xmin:w2 - xmin] = cv2.bitwise_or(
+            result_img[-ymin:h2 - ymin, -xmin:w2 - xmin], img2)
 
         return result_img
 
-    def say_hi(self):
-        print('Hii From Jane Doe..')
-
-    def do_something(self):
-        return None
 
     def do_something_more(self):
         return None
