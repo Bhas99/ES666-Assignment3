@@ -13,7 +13,7 @@ def load_images_from_folder(folder):
 
 if __name__ == "__main__":
     # Load images from the Images folder
-    images = load_images_from_folder('./Users/bhaskarhazarika/Desktop/ES666-Assignment3/Images')
+    images = load_images_from_folder('./Users/bhaskarhazarika/Desktop/ES666-Assignment3')
 
     # Create an instance of PanaromaStitcher
     stitcher = PanaromaStitcher()
