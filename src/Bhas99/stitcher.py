@@ -1,39 +1,46 @@
+import pdb
+import glob
+import cv2
 import os
-from src.stitcher import PanaromaStitcher
+from src.JohnDoe import some_function
+from src.JohnDoe.some_folder import folder_func
 
-def main():
-    # Parent directory containing the subdirectories of images (e.g., I2, I6, I4)
-    parent_image_directory = './Images'
+class PanaromaStitcher():
+    def __init__(self):
+        pass
 
-    # Get all subdirectories in the parent image directory
-    subdirs = [d for d in os.listdir(parent_image_directory) if os.path.isdir(os.path.join(parent_image_directory, d))]
+    def make_panaroma_for_images_in(self,path):
+        imf = path
+        all_images = sorted(glob.glob(imf+os.sep+'*'))
+        print('Found {} Images for stitching'.format(len(all_images)))
 
-    # Initialize the panorama stitcher
-    stitcher = PanaromaStitcher()
+        ####  Your Implementation here
+        #### you can use functions, class_methods, whatever!! Examples are illustrated below. Remove them and implement yours.
+        #### Just make sure to return final stitched image and all Homography matrices from here
+        self.say_hi()
+        self.do_something()
+        self.do_something_more()
 
-    # Process each subdirectory
-    for subdir in subdirs:
-        image_directory = os.path.join(parent_image_directory, subdir)
-        print(f"\n************ Processing images in {image_directory} ************")
+        some_function.some_func()
+        folder_func.foo()
 
-        try:
-            # Perform panorama stitching for the images in this subdirectory
-            stitched_image, homography_matrices = stitcher.make_panaroma_for_images_in(image_directory)
+        # Collect all homographies calculated for pair of images and return
+        homography_matrix_list =[]
+        # Return Final panaroma
+        stitcher = cv2.Stitcher_create()
+        status, stitched_image = stitcher.stitch([cv2.imread(im) for im in all_images])
+        # stitched_image = cv2.imread(all_images[0])
+        #####
+        
+        return stitched_image, homography_matrix_list 
 
-            # Save the result for this set of images
-            result_path = f'./results/panorama_{subdir}.png'
-            cv2.imwrite(result_path, stitched_image)
-
-            print(f"Panorama saved at {result_path}")
-
-            # Optionally, print homography matrices for each stitching step
-            for i, H in enumerate(homography_matrices):
-                print(f"Homography matrix {i+1} for {subdir}:\n{H}")
-
-        except Exception as e:
-            print(f"Error processing {image_directory}: {e}")
-
-if __name__ == "__main__":
-    main()
+    def say_hi(self):
+        print('Hii From Jane Doe..')
+    
+    def do_something(self):
+        return None
+    
+    def do_something_more(self):
+        return None
 
 
