@@ -1,118 +1,59 @@
-import glob
 import cv2
-import os
 import numpy as np
+import glob
+import os
 
 class PanaromaStitcher():
     def __init__(self):
         pass
 
-    def make_panaroma_for_images_in(self, path):
-        # Collect all images from the specified path
-        all_images = sorted(glob.glob(path + os.sep + '*'))
-        print(f'Found {len(all_images)} images for stitching')
-
-        # Read the images
-        images = [cv2.imread(im) for im in all_images]
-
-        # Initialize the first image as the base
-        stitched_image = images[0]
-
-        # List to store homography matrices
-        homography_matrix_list = []
-
-        # Iterate over the consecutive images and stitch them together
-        for i in range(1, len(images)):
-            kp1, des1 = self.detect_features(stitched_image)
-            kp2, des2 = self.detect_features(images[i])
-
-            # Match features between the current and next image
-            matches = self.match_features(des1, des2)
-
-            # Extract points from the matched keypoints
-            src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 2)
-            dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 2)
-
-            # Estimate homography matrix
-            H = self.estimate_homography(src_pts, dst_pts)
-            homography_matrix_list.append(H)
-
-            # Warp the next image based on the homography matrix and stitch it
-            stitched_image = self.stitch_images(stitched_image, images[i], H)
-
-        # Return final stitched image and homography matrices
-        return stitched_image, homography_matrix_list
-
-    def detect_features(self, image):
-        # Convert to grayscale for feature detection
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Use SIFT for feature detection
+    def detect_and_match_features(self, img1, img2):
+        # Feature detection
         sift = cv2.SIFT_create()
-        keypoints, descriptors = sift.detectAndCompute(gray, None)
-        return keypoints, descriptors
+        keypoints1, descriptors1 = sift.detectAndCompute(img1, None)
+        keypoints2, descriptors2 = sift.detectAndCompute(img2, None)
 
-    def match_features(self, des1, des2):
-        # Brute-force matcher with L2 norm for SIFT
-        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        matches = bf.match(des1, des2)
-        # Sort matches by distance (best matches first)
+        # Feature matching
+        matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        matches = matcher.match(descriptors1, descriptors2)
         matches = sorted(matches, key=lambda x: x.distance)
-        return matches
 
-    def estimate_homography(self, src_pts, dst_pts):
-        # Create the A matrix for Direct Linear Transformation (DLT)
-        A = []
-        for i in range(len(src_pts)):
-            x, y = src_pts[i][0], src_pts[i][1]
-            xp, yp = dst_pts[i][0], dst_pts[i][1]
-            A.append([-x, -y, -1, 0, 0, 0, x*xp, y*xp, xp])
-            A.append([0, 0, 0, -x, -y, -1, x*yp, y*yp, yp])
-        A = np.array(A)
+        return keypoints1, keypoints2, matches
 
-        # Perform SVD to solve the system of equations
-        U, S, Vh = np.linalg.svd(A)
-        H = Vh[-1].reshape(3, 3)
-        return H / H[-1, -1]  # Normalize so that H[2,2] = 1
+    def compute_homography(self, kp1, kp2, matches):
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+        H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        return H
 
-    def stitch_images(self, image1, image2, H):
-        # Get size of the first image
-        h1, w1 = image1.shape[:2]
-        # Warp the second image using the homography matrix H
-        warped_image = cv2.warpPerspective(image2, H, (w1 + image2.shape[1], h1))
+    def stitch_images(self, images):
+        stitched_image = images[0]
+        homography_matrices = []
 
-        # Place the first image in the warped image space
-        warped_image[0:h1, 0:w1] = image1
-        return warped_image
+        for i in range(1, len(images)):
+            kp1, kp2, matches = self.detect_and_match_features(stitched_image, images[i])
+            H = self.compute_homography(kp1, kp2, matches)
+            homography_matrices.append(H)
+            
+            # Warp the next image onto the current panorama
+            stitched_image = cv2.warpPerspective(stitched_image, H, (stitched_image.shape[1] + images[i].shape[1], stitched_image.shape[0]))
+            stitched_image[0:images[i].shape[0], 0:images[i].shape[1]] = images[i]
 
+        return stitched_image, homography_matrices
 
-    def match_features(self, desc1, desc2):
-        # Create a Brute-Force matcher object
-        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        # Match descriptors
-        matches = bf.match(desc1, desc2)
-        # Sort matches by distance (best matches come first)
-        matches = sorted(matches, key=lambda x: x.distance)
-        return matches
-
-    def estimate_homography(self, src_pts, dst_pts):
-        A = []
-        for i in range(len(src_pts)):
-            x, y = src_pts[i][0], src_pts[i][1]
-            xp, yp = dst_pts[i][0], dst_pts[i][1]
-            A.append([-x, -y, -1, 0, 0, 0, x*xp, y*xp, xp])
-            A.append([0, 0, 0, -x, -y, -1, x*yp, y*yp, yp])
+    def make_panaroma_for_images_in(self, path):
+        # Load images
+        image_files = sorted(glob.glob(os.path.join(path, '*')))
+        images = [cv2.imread(img) for img in image_files]
         
-        A = np.array(A)
-        # SVD decomposition
-        U, S, Vh = np.linalg.svd(A)
-        # The homography matrix H is the last row of V (or Vh[-1])
-        H = Vh[-1].reshape(3, 3)
-        # Normalize so that H[2,2] == 1
-        return H / H[-1, -1]
+        print(f'Found {len(images)} images for stitching')
 
-    def stitch_images(self, image1, image2, H):
-        # Warp image2 to the perspective of image1
-        result = cv2.warpPerspective(image2, H, (image1.shape[1] + image2.shape[1], image1.shape[0]))
-        # Place image1 in the result (on the left)
-        result[0:image1.shape[0], 0:image1.shape[1]] = image1
-        return result
+        # Stitch images
+        stitched_image, homography_matrix_list = self.stitch_images(images)
+
+        # Save final stitched image
+        result_path = './results/panorama.png'
+        cv2.imwrite(result_path, stitched_image)
+        print(f'Panorama saved ... @ {result_path}')
+        
+        return stitched_image, homography_matrix_list
