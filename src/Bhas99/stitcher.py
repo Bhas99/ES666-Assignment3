@@ -1,46 +1,61 @@
-import pdb
-import glob
 import cv2
-import os
-from src.JohnDoe import some_function
-from src.JohnDoe.some_folder import folder_func
+import numpy as np
 
-class PanaromaStitcher():
-    def __init__(self):
-        pass
+class PanaromaStitcher:
+    def make_panaroma_for_images_in(self, image_list):
+        # Step 1: Detect and extract features
+        keypoints, descriptors = self.detect_and_extract_features(image_list)
 
-    def make_panaroma_for_images_in(self,path):
-        imf = path
-        all_images = sorted(glob.glob(imf+os.sep+'*'))
-        print('Found {} Images for stitching'.format(len(all_images)))
+        # Step 2: Match the features between the images
+        matches = self.match_features(descriptors)
 
-        ####  Your Implementation here
-        #### you can use functions, class_methods, whatever!! Examples are illustrated below. Remove them and implement yours.
-        #### Just make sure to return final stitched image and all Homography matrices from here
-        self.say_hi()
-        self.do_something()
-        self.do_something_more()
+        # Step 3: Estimate homography matrices using the matches
+        homographies = self.estimate_homographies(matches, keypoints)
 
-        some_function.some_func()
-        folder_func.foo()
+        # Step 4: Stitch the images using homography matrices
+        stitched_image = self.stitch_images(image_list, homographies)
 
-        # Collect all homographies calculated for pair of images and return
-        homography_matrix_list =[]
-        # Return Final panaroma
-        stitcher = cv2.Stitcher_create()
-        status, stitched_image = stitcher.stitch([cv2.imread(im) for im in all_images])
-        # stitched_image = cv2.imread(all_images[0])
-        #####
-        
-        return stitched_image, homography_matrix_list 
+        # Return the stitched panorama and the homography matrices
+        return stitched_image, homographies
 
-    def say_hi(self):
-        print('Hii From Jane Doe..')
-    
-    def do_something(self):
-        return None
-    
-    def do_something_more(self):
-        return None
+    def detect_and_extract_features(self, image_list):
+        orb = cv2.ORB_create()
+        keypoints = []
+        descriptors = []
+        for img in image_list:
+            kp, desc = orb.detectAndCompute(img, None)
+            keypoints.append(kp)
+            descriptors.append(desc)
+        return keypoints, descriptors
+
+    def match_features(self, descriptors):
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = []
+        for i in range(len(descriptors) - 1):
+            matches.append(matcher.match(descriptors[i], descriptors[i+1]))
+        return matches
+
+    def estimate_homographies(self, matches, keypoints):
+        homographies = []
+        for match_set in matches:
+            src_pts = np.float32([keypoints[0][m.queryIdx].pt for m in match_set]).reshape(-1, 1, 2)
+            dst_pts = np.float32([keypoints[1][m.trainIdx].pt for m in match_set]).reshape(-1, 1, 2)
+            
+            # Compute homography using RANSAC
+            H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            homographies.append(H)
+        return homographies
+
+    def stitch_images(self, images, homographies):
+        # Assume the first image as the base
+        stitched_image = images[0]
+        for i in range(1, len(images)):
+            # Warp image using the homography matrix
+            h, w, _ = images[i].shape
+            warped_image = cv2.warpPerspective(images[i], homographies[i-1], (w * 2, h * 2))
+            # Combine with the stitched image
+            stitched_image = cv2.addWeighted(stitched_image, 0.5, warped_image, 0.5, 0)
+        return stitched_image
+
 
 
