@@ -1,41 +1,25 @@
-import glob
 import cv2
-import os
 import numpy as np
 
 class PanaromaStitcher:
-    def __init__(self):
-        pass
+    def make_panaroma_for_images_in(self, image_list):
+        # Step 1: Detect and extract features
+        keypoints, descriptors = self.detect_and_extract_features(image_list)
 
-    def make_panaroma_for_images_in(self, path):
-        imf = path
-        all_images = sorted(glob.glob(imf + os.sep + '*'))
-        print('Found {} Images for stitching'.format(len(all_images)))
-
-        # Load images
-        images = [cv2.imread(img_path) for img_path in all_images]
-        
-        # Ensure images are loaded correctly
-        if not images or len(images) < 2:
-            print("Not enough images to stitch!")
-            return None, []
-
-        # Detect and extract features
-        keypoints, descriptors = self.detect_and_extract_features(images)
-
-        # Match features between consecutive images
+        # Step 2: Match the features between the images
         matches = self.match_features(descriptors)
 
-        # Estimate homography matrices
+        # Step 3: Estimate homography matrices using the matches
         homographies = self.estimate_homographies(matches, keypoints)
 
-        # Stitch images together
-        stitched_image = self.stitch_images(images, homographies)
+        # Step 4: Stitch the images using homography matrices
+        stitched_image = self.stitch_images(image_list, homographies)
 
-        return stitched_image, homographies 
+        # Return the stitched panorama and the homography matrices
+        return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
-        sift = cv2.SIFT_create(nfeatures=500)  # Limit to 500 keypoints per image
+        sift = cv2.SIFT_create(nfeatures=800)  # Increase the number of keypoints
         keypoints = []
         descriptors = []
         for img in image_list:
@@ -45,9 +29,9 @@ class PanaromaStitcher:
         return keypoints, descriptors
 
     def match_features(self, descriptors):
-        # Use FLANN-based matcher for faster matching
+        # Use FLANN-based matcher for faster and more accurate matching
         index_params = dict(algorithm=1, trees=5)
-        search_params = dict(checks=50)
+        search_params = dict(checks=100)
         matcher = cv2.FlannBasedMatcher(index_params, search_params)
         
         matches = []
@@ -60,7 +44,12 @@ class PanaromaStitcher:
                 for m, n in match:
                     if m.distance < 0.7 * n.distance:
                         good_matches.append(m)
-                matches.append(good_matches)
+                
+                # Ensure enough good matches are found
+                if len(good_matches) > 10:  # Minimum of 10 matches
+                    matches.append(good_matches)
+                else:
+                    print(f"Not enough good matches between image {i} and {i + 1}. Skipping.")
         return matches
 
     def estimate_homographies(self, matches, keypoints):
@@ -73,40 +62,51 @@ class PanaromaStitcher:
             src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set]).reshape(-1, 1, 2)
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set]).reshape(-1, 1, 2)
             
-            # Compute homography using RANSAC
+            # Compute homography using RANSAC for outlier rejection
             H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
             homographies.append(H)
         return homographies
 
     def stitch_images(self, images, homographies):
         # Start with the first image as the base
-        stitched_image = images[0]
+        base_img = images[0]
+        height, width = base_img.shape[:2]
         
-        # Create a larger canvas to fit the stitched result
-        height, width = images[0].shape[:2]
-        result_canvas = np.zeros((height * 2, width * 4, 3), dtype=np.uint8)
-        result_canvas[:height, :width] = stitched_image
+        # Initialize canvas with a larger size
+        result_canvas = np.zeros((height * 2, width * len(images), 3), dtype=np.uint8)
+        result_canvas[:height, :width] = base_img
         
+        current_transform = np.eye(3)  # Start with an identity matrix
+        
+        # Blend each image with the canvas
         for i in range(1, len(images)):
             if i - 1 < len(homographies) and homographies[i - 1] is not None:
-                H = homographies[i - 1]
-
-                warped_image = cv2.warpPerspective(images[i], H, (result_canvas.shape[1], result_canvas.shape[0]))
+                current_transform = current_transform @ homographies[i - 1]
                 
-                mask = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
-                _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
-                mask_inv = cv2.bitwise_not(mask)
+                # Warp the next image using the cumulative transformation
+                warped_image = cv2.warpPerspective(images[i], current_transform, 
+                                                   (result_canvas.shape[1], result_canvas.shape[0]))
                 
-                result_canvas_bg = cv2.bitwise_and(result_canvas, result_canvas, mask=mask_inv)
-                warped_fg = cv2.bitwise_and(warped_image, warped_image, mask=mask)
+                # Create masks to blend the stitched image smoothly
+                mask1 = cv2.cvtColor(result_canvas, cv2.COLOR_BGR2GRAY)
+                _, mask1 = cv2.threshold(mask1, 1, 255, cv2.THRESH_BINARY)
+                mask2 = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
+                _, mask2 = cv2.threshold(mask2, 1, 255, cv2.THRESH_BINARY)
+                overlap_mask = cv2.bitwise_and(mask1, mask2)
                 
-                result_canvas = cv2.add(result_canvas_bg, warped_fg)
+                # Use the masks to blend the images
+                result_canvas = self.blend_images(result_canvas, warped_image, overlap_mask)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
         result = self.crop_black_edges(result_canvas)
-        
         return result
+
+    def blend_images(self, img1, img2, overlap_mask):
+        # Use Gaussian pyramids for smoother blending
+        gauss_mask = cv2.GaussianBlur(overlap_mask, (21, 21), 0)
+        blended = cv2.addWeighted(img1, 1, img2, 1, 0, mask=gauss_mask)
+        return blended
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
