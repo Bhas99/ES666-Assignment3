@@ -10,7 +10,7 @@ class PanaromaStitcher:
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
-        sift = cv2.SIFT_create()
+        sift = cv2.SIFT_create(nfeatures=1000)
         keypoints = []
         descriptors = []
         for img in image_list:
@@ -30,7 +30,7 @@ class PanaromaStitcher:
                 match = matcher.knnMatch(descriptors[i], descriptors[i + 1], k=2)
                 good_matches = []
                 for m, n in match:
-                    if m.distance < 0.7 * n.distance:
+                    if m.distance < 0.75 * n.distance:
                         good_matches.append(m)
                 
                 if len(good_matches) > 10:
@@ -66,28 +66,16 @@ class PanaromaStitcher:
                 current_transform = current_transform @ homographies[i - 1]
                 warped_image = cv2.warpPerspective(images[i], current_transform, 
                                                    (result_canvas.shape[1], result_canvas.shape[0]))
-                result_canvas = self.multi_band_blend(result_canvas, warped_image)
+                result_canvas = self.feather_blend(result_canvas, warped_image)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
         return self.crop_black_edges(result_canvas)
 
-    def multi_band_blend(self, img1, img2):
-        # Create masks for both images
-        img1_gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-        img2_gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-        
-        _, mask1 = cv2.threshold(img1_gray, 1, 255, cv2.THRESH_BINARY)
-        _, mask2 = cv2.threshold(img2_gray, 1, 255, cv2.THRESH_BINARY)
-        
-        overlap_mask = cv2.bitwise_and(mask1, mask2)
-        mask_not = cv2.bitwise_not(overlap_mask)
-        
-        img1 = cv2.bitwise_and(img1, img1, mask=mask_not)
-        img2 = cv2.bitwise_and(img2, img2, mask=overlap_mask)
-        
-        blended = cv2.add(img1, img2)
-        return blended
+    def feather_blend(self, img1, img2):
+        """Feather blending to smooth out the transitions."""
+        overlap = cv2.addWeighted(img1, 0.5, img2, 0.5, 0)
+        return np.where(img2 == 0, img1, overlap)
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
