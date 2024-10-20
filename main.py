@@ -1,3 +1,4 @@
+import cv2
 from src.Bhas99.stitcher import PanaromaStitcher
 
 def main():
@@ -11,8 +12,11 @@ def main():
     panorama, homographies = stitcher.make_panaroma_for_images_in(images)
     
     # Save the results
+    if not os.path.exists('results'):
+        os.makedirs('results')
     cv2.imwrite('./results/panorama.jpg', panorama)
     print("Panorama created and saved!")
 
 if __name__ == "__main__":
     main()
+
