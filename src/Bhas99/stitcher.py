@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import os
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
@@ -14,6 +15,12 @@ class PanaromaStitcher:
 
         # Step 4: Stitch the images using homography matrices
         stitched_image = self.stitch_images(image_list, homographies)
+
+        # Save the stitched image
+        if stitched_image is not None:
+            if not os.path.exists('./results'):
+                os.makedirs('./results')
+            cv2.imwrite('./results/panorama_result.jpg', cv2.cvtColor(stitched_image, cv2.COLOR_RGB2BGR))
 
         # Return the stitched panorama and the homography matrices
         return stitched_image, homographies
@@ -55,13 +62,28 @@ class PanaromaStitcher:
                 print(f"Not enough matches to compute homography for image pair {i}. Skipping.")
                 continue
 
-            src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set]).reshape(-1, 1, 2)
-            dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set]).reshape(-1, 1, 2)
-            
-            # Compute homography using RANSAC
-            H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set])
+            dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
+
+            # Manually compute homography using DLT (Direct Linear Transformation)
+            H = self.compute_homography(src_pts, dst_pts)
             homographies.append(H)
         return homographies
+
+    def compute_homography(self, src_pts, dst_pts):
+        """ Manually compute the homography matrix using Direct Linear Transformation (DLT). """
+        A = []
+        for i in range(len(src_pts)):
+            x, y = src_pts[i][0], src_pts[i][1]
+            xp, yp = dst_pts[i][0], dst_pts[i][1]
+            A.append([-x, -y, -1, 0, 0, 0, xp*x, xp*y, xp])
+            A.append([0, 0, 0, -x, -y, -1, yp*x, yp*y, yp])
+        
+        A = np.array(A)
+        U, S, V = np.linalg.svd(A)
+        H = V[-1].reshape(3, 3)
+        H = H / H[2, 2]  # Normalize so that H[2,2] = 1
+        return H
 
     def stitch_images(self, images, homographies):
         result = images[0]
@@ -76,17 +98,23 @@ class PanaromaStitcher:
                 current_transform = current_transform @ homographies[i - 1]
                 warped_image = cv2.warpPerspective(images[i], current_transform, 
                                                    (result_canvas.shape[1], result_canvas.shape[0]))
-                result_canvas = self.apply_gaussian_blend(result_canvas, warped_image)
+                result_canvas = self.blend_images(result_canvas, warped_image)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
         return self.crop_black_edges(result_canvas)
 
-    def apply_gaussian_blend(self, img1, img2):
-        """Apply Gaussian blending to smooth transitions."""
-        # Create a mask where the images overlap
-        overlap = cv2.addWeighted(img1, 0.5, img2, 0.5, 0)
-        return np.where(img2 == 0, img1, overlap)
+    def blend_images(self, img1, img2):
+        """Basic blending for overlapping regions."""
+        mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+        mask_inv = cv2.bitwise_not(mask)
+        
+        img1_bg = cv2.bitwise_and(img1, img1, mask=mask_inv)
+        img2_fg = cv2.bitwise_and(img2, img2, mask=mask)
+        
+        blended = cv2.add(img1_bg, img2_fg)
+        return blended
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
