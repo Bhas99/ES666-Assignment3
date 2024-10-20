@@ -19,7 +19,7 @@ class PanaromaStitcher:
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
-        sift = cv2.SIFT_create()
+        sift = cv2.SIFT_create(nfeatures=500)  # Limit to 500 keypoints per image
         keypoints = []
         descriptors = []
         for img in image_list:
@@ -29,12 +29,22 @@ class PanaromaStitcher:
         return keypoints, descriptors
 
     def match_features(self, descriptors):
-        # Use NORM_L2 for SIFT descriptors
-        matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        # Use FLANN-based matcher for faster matching
+        index_params = dict(algorithm=1, trees=5)  # FLANN KDTree algorithm
+        search_params = dict(checks=50)  # Specify the number of checks
+        matcher = cv2.FlannBasedMatcher(index_params, search_params)
+        
         matches = []
         for i in range(len(descriptors) - 1):
-            match = matcher.match(descriptors[i], descriptors[i + 1])
-            matches.append(match)
+            if descriptors[i] is not None and descriptors[i + 1] is not None:
+                match = matcher.knnMatch(descriptors[i], descriptors[i + 1], k=2)
+                
+                # Apply Lowe's ratio test to retain good matches
+                good_matches = []
+                for m, n in match:
+                    if m.distance < 0.7 * n.distance:
+                        good_matches.append(m)
+                matches.append(good_matches)
         return matches
 
     def estimate_homographies(self, matches, keypoints):
