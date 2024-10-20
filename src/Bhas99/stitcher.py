@@ -63,46 +63,23 @@ class PanaromaStitcher:
                 print(f"Not enough matches to compute homography for image pair {i}. Skipping.")
                 continue
 
-            src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set])
-            dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
+            src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set]).reshape(-1, 1, 2)
+            dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set]).reshape(-1, 1, 2)
 
             # Use RANSAC to compute homography
-            H, mask = self.compute_homography_ransac(src_pts, dst_pts)
+            H = self.direct_linear_transform(src_pts, dst_pts)
             if H is not None:
                 homographies.append(H)
         return homographies
 
-    def compute_homography_ransac(self, src_pts, dst_pts):
-        max_inliers = 0
-        best_H = None
-        
-        for _ in range(1000):
-            idxs = np.random.choice(len(src_pts), 4, replace=False)
-            src_random = src_pts[idxs]
-            dst_random = dst_pts[idxs]
-            
-            H = self.direct_linear_transform(src_random, dst_random)
-            
-            if H is None:
-                continue
-            
-            projected = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
-            distances = np.linalg.norm(dst_pts - projected, axis=1)
-            inliers = distances < 5
-            
-            if np.sum(inliers) > max_inliers:
-                max_inliers = np.sum(inliers)
-                best_H = H
-                
-        return best_H
-
     def direct_linear_transform(self, src_pts, dst_pts):
+        # Assuming src_pts and dst_pts are Nx1x2
         A = []
-        for i in range(4):
-            x, y = src_pts[i][0], src_pts[i][1]
-            xp, yp = dst_pts[i][0], dst_pts[i][1]
-            A.append([-x, -y, -1, 0, 0, 0, xp*x, xp*y, xp])
-            A.append([0, 0, 0, -x, -y, -1, yp*x, yp*y, yp])
+        for i in range(len(src_pts)):
+            x, y = src_pts[i][0]
+            xp, yp = dst_pts[i][0]
+            A.append([-x, -y, -1, 0, 0, 0, x*xp, y*xp, xp])
+            A.append([0, 0, 0, -x, -y, -1, x*yp, y*yp, yp])
         
         A = np.array(A)
         U, S, V = np.linalg.svd(A)
@@ -129,8 +106,14 @@ class PanaromaStitcher:
 
     def blend_images(self, img1, img2):
         alpha = 0.5
-        blended = cv2.addWeighted(img1, alpha, img2, 1 - alpha, 0)
-        return blended
+        mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+        mask_inv = cv2.bitwise_not(mask)
+        
+        img1_bg = cv2.bitwise_and(img1, img1, mask=mask_inv)
+        img2_fg = cv2.bitwise_and(img2, img2, mask=mask)
+        
+        return cv2.addWeighted(img1_bg, alpha, img2_fg, 1 - alpha, 0)
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
