@@ -1,4 +1,4 @@
-from src.YourName.stitcher import PanaromaStitcher
+from src.Bhas99.stitcher import PanaromaStitcher
 
 def main():
     # Load your images
