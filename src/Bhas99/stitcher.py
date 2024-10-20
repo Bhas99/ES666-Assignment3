@@ -92,9 +92,11 @@ class PanaromaStitcher:
                 _, mask1 = cv2.threshold(mask1, 1, 255, cv2.THRESH_BINARY)
                 mask2 = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
                 _, mask2 = cv2.threshold(mask2, 1, 255, cv2.THRESH_BINARY)
+                
+                # Create a combined mask to determine the overlap region
                 overlap_mask = cv2.bitwise_and(mask1, mask2)
                 
-                # Use the masks to blend the images
+                # Blend using a weighted addition over the overlap area
                 result_canvas = self.blend_images(result_canvas, warped_image, overlap_mask)
             else:
                 print(f"Skipping image {i} due to missing homography.")
@@ -103,10 +105,18 @@ class PanaromaStitcher:
         return result
 
     def blend_images(self, img1, img2, overlap_mask):
-        # Use Gaussian pyramids for smoother blending
-        gauss_mask = cv2.GaussianBlur(overlap_mask, (21, 21), 0)
-        blended = cv2.addWeighted(img1, 1, img2, 1, 0, mask=gauss_mask)
-        return blended
+        # Blending the overlapping areas
+        mask1 = cv2.bitwise_not(overlap_mask)
+        result1 = cv2.bitwise_and(img1, img1, mask=mask1)
+        result2 = cv2.bitwise_and(img2, img2, mask=overlap_mask)
+        
+        # Weighted addition to smoothen the overlapping area
+        alpha = 0.5
+        blended = cv2.addWeighted(result1, alpha, result2, 1 - alpha, 0)
+        
+        # Combining the non-overlapping parts with the blended result
+        result = cv2.add(result1, blended)
+        return result
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
