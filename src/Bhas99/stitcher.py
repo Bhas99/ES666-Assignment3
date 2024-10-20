@@ -29,7 +29,8 @@ class PanaromaStitcher:
         return keypoints, descriptors
 
     def match_features(self, descriptors):
-        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        # Use NORM_L2 for SIFT descriptors
+        matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
         matches = []
         for i in range(len(descriptors) - 1):
             match = matcher.match(descriptors[i], descriptors[i + 1])
