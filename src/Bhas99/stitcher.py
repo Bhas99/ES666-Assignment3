@@ -18,20 +18,42 @@ class PanaromaStitcher:
         # Return the stitched panorama and the homography matrices
         return stitched_image, homographies
 
+    def cylindrical_projection(self, img, f):
+        """Apply cylindrical projection to an image."""
+        h, w = img.shape[:2]
+        K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])  # Intrinsic camera matrix
+        
+        # Create the cylindrical map
+        cyl = np.zeros_like(img)
+        for y in range(h):
+            for x in range(w):
+                theta = (x - w / 2) / f
+                h_ = (y - h / 2) / f
+                
+                X = np.array([np.sin(theta), h_, np.cos(theta)])
+                X = np.dot(K, X)
+                x_, y_ = int(X[0] / X[2]), int(X[1] / X[2])
+                
+                if 0 <= x_ < w and 0 <= y_ < h:
+                    cyl[y, x] = img[y_, x_]
+        
+        return cyl
+
     def detect_and_extract_features(self, image_list):
         sift = cv2.SIFT_create(nfeatures=500)  # Limit to 500 keypoints per image
         keypoints = []
         descriptors = []
         for img in image_list:
-            kp, desc = sift.detectAndCompute(img, None)
+            # Apply cylindrical projection to images
+            projected_img = self.cylindrical_projection(img, f=500)
+            kp, desc = sift.detectAndCompute(projected_img, None)
             keypoints.append(kp)
             descriptors.append(desc)
         return keypoints, descriptors
 
     def match_features(self, descriptors):
-        # Use FLANN-based matcher for faster matching
-        index_params = dict(algorithm=1, trees=5)  # FLANN KDTree algorithm
-        search_params = dict(checks=50)  # Specify the number of checks
+        index_params = dict(algorithm=1, trees=5)
+        search_params = dict(checks=50)
         matcher = cv2.FlannBasedMatcher(index_params, search_params)
         
         matches = []
@@ -63,50 +85,37 @@ class PanaromaStitcher:
         return homographies
 
     def stitch_images(self, images, homographies):
-        # Start with the first image as the base
         stitched_image = images[0]
         
-        # Create a larger canvas to fit the stitched result
         height, width = images[0].shape[:2]
         result_canvas = np.zeros((height * 2, width * 3, 3), dtype=np.uint8)
         result_canvas[:height, :width] = stitched_image
         
-        # Process each image with its homography matrix
         for i in range(1, len(images)):
             if i - 1 < len(homographies) and homographies[i - 1] is not None:
                 H = homographies[i - 1]
 
-                # Warp the next image onto the canvas
                 warped_image = cv2.warpPerspective(images[i], H, (result_canvas.shape[1], result_canvas.shape[0]))
                 
-                # Create a mask to blend the stitched image smoothly
                 mask = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
                 _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
                 mask_inv = cv2.bitwise_not(mask)
                 
-                # Use the mask to overlay the images correctly
                 result_canvas_bg = cv2.bitwise_and(result_canvas, result_canvas, mask=mask_inv)
                 warped_fg = cv2.bitwise_and(warped_image, warped_image, mask=mask)
                 
-                # Combine the images
                 result_canvas = cv2.add(result_canvas_bg, warped_fg)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
-        # Crop out the black areas
         result = self.crop_black_edges(result_canvas)
         
         return result
 
     def crop_black_edges(self, image):
-        # Convert to grayscale and find all non-black pixels
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
-        
-        # Find the bounding box of all non-black areas
         coords = cv2.findNonZero(thresh)
         x, y, w, h = cv2.boundingRect(coords)
-        
-        # Crop to the bounding box
         cropped_image = image[y:y+h, x:x+w]
         return cropped_image
