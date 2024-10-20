@@ -4,6 +4,9 @@ import os
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
+        # Apply Gaussian blur to each image to smoothen and reduce noise
+        image_list = [cv2.GaussianBlur(img, (5, 5), 0) for img in image_list]
+        
         keypoints, descriptors = self.detect_and_extract_features(image_list)
         matches = self.match_features(descriptors)
         homographies = self.estimate_homographies(matches, keypoints)
@@ -56,9 +59,10 @@ class PanaromaStitcher:
             src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set])
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
 
-            # Manually compute homography using normalized DLT
+            # Manually compute homography using RANSAC
             H = self.ransac_homography(src_pts, dst_pts)
-            homographies.append(H)
+            if H is not None:
+                homographies.append(H)
         return homographies
 
     def ransac_homography(self, src_pts, dst_pts, threshold=5.0, max_iterations=2000):
@@ -122,7 +126,6 @@ class PanaromaStitcher:
         return self.crop_black_edges(result_canvas)
 
     def blend_images(self, img1, img2):
-        """Blending to avoid harsh edges."""
         mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
         mask_inv = cv2.bitwise_not(mask)
