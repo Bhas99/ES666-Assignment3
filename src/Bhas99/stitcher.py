@@ -4,19 +4,27 @@ import os
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
-        # Apply Gaussian blur to each image to smoothen and reduce noise
+        # Step 1: Pre-process images with Gaussian blur
         image_list = [cv2.GaussianBlur(img, (5, 5), 0) for img in image_list]
         
+        # Step 2: Detect and extract features
         keypoints, descriptors = self.detect_and_extract_features(image_list)
+        
+        # Step 3: Match features across images
         matches = self.match_features(descriptors)
+        
+        # Step 4: Estimate homographies
         homographies = self.estimate_homographies(matches, keypoints)
+        
+        # Step 5: Stitch images using estimated homographies
         stitched_image = self.stitch_images(image_list, homographies)
-
+        
+        # Save the stitched image if it exists
         if stitched_image is not None:
             if not os.path.exists('./results'):
                 os.makedirs('./results')
             cv2.imwrite('./results/panorama_result.jpg', cv2.cvtColor(stitched_image, cv2.COLOR_RGB2BGR))
-
+        
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
@@ -38,15 +46,14 @@ class PanaromaStitcher:
         for i in range(len(descriptors) - 1):
             if descriptors[i] is not None and descriptors[i + 1] is not None:
                 match = matcher.knnMatch(descriptors[i], descriptors[i + 1], k=2)
-                good_matches = []
-                for m, n in match:
-                    if m.distance < 0.75 * n.distance:
-                        good_matches.append(m)
+                
+                # Apply ratio test
+                good_matches = [m for m, n in match if m.distance < 0.75 * n.distance]
                 
                 if len(good_matches) > 10:
                     matches.append(good_matches)
                 else:
-                    print(f"Not enough good matches between image {i} and {i + 1}. Skipping.")
+                    print(f"Not enough matches between image {i} and {i + 1}. Skipping.")
         return matches
 
     def estimate_homographies(self, matches, keypoints):
@@ -59,42 +66,39 @@ class PanaromaStitcher:
             src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set])
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
 
-            # Manually compute homography using RANSAC
-            H = self.ransac_homography(src_pts, dst_pts)
+            # Use RANSAC to compute homography
+            H = self.compute_ransac_homography(src_pts, dst_pts)
             if H is not None:
                 homographies.append(H)
         return homographies
 
-    def ransac_homography(self, src_pts, dst_pts, threshold=5.0, max_iterations=2000):
+    def compute_ransac_homography(self, src_pts, dst_pts):
         max_inliers = 0
         best_H = None
-
-        for _ in range(max_iterations):
-            # Randomly select 4 points
+        
+        for _ in range(1000):
             idxs = np.random.choice(len(src_pts), 4, replace=False)
             src_random = src_pts[idxs]
             dst_random = dst_pts[idxs]
-
-            # Compute homography for these points
-            H = self.compute_homography(src_random, dst_random)
+            
+            H = self.direct_linear_transform(src_random, dst_random)
+            
             if H is None:
                 continue
-
-            # Project src_pts using H and count inliers
-            projected_pts = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), H)
-            distances = np.linalg.norm(dst_pts - projected_pts.reshape(-1, 2), axis=1)
-            inliers = distances < threshold
-
-            # Track the best homography
+            
+            projected = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+            distances = np.linalg.norm(dst_pts - projected, axis=1)
+            inliers = distances < 5
+            
             if np.sum(inliers) > max_inliers:
                 max_inliers = np.sum(inliers)
                 best_H = H
-
+                
         return best_H
 
-    def compute_homography(self, src_pts, dst_pts):
+    def direct_linear_transform(self, src_pts, dst_pts):
         A = []
-        for i in range(len(src_pts)):
+        for i in range(4):
             x, y = src_pts[i][0], src_pts[i][1]
             xp, yp = dst_pts[i][0], dst_pts[i][1]
             A.append([-x, -y, -1, 0, 0, 0, xp*x, xp*y, xp])
@@ -103,27 +107,25 @@ class PanaromaStitcher:
         A = np.array(A)
         U, S, V = np.linalg.svd(A)
         H = V[-1].reshape(3, 3)
-        H = H / H[2, 2]  # Normalize so that H[2,2] = 1
-        return H
+        return H / H[2, 2] if H[2, 2] != 0 else None
 
     def stitch_images(self, images, homographies):
         result = images[0]
         height, width = images[0].shape[:2]
-        result_canvas = np.zeros((height * 2, width * len(images), 3), dtype=np.uint8)
-        result_canvas[:height, :width] = result
+        canvas = np.zeros((height * 2, width * len(images), 3), dtype=np.uint8)
+        canvas[:height, :width] = result
         
-        current_transform = np.eye(3)
+        transform = np.eye(3)
         
         for i in range(1, len(images)):
             if i - 1 < len(homographies) and homographies[i - 1] is not None:
-                current_transform = current_transform @ homographies[i - 1]
-                warped_image = cv2.warpPerspective(images[i], current_transform, 
-                                                   (result_canvas.shape[1], result_canvas.shape[0]))
-                result_canvas = self.blend_images(result_canvas, warped_image)
+                transform = transform @ homographies[i - 1]
+                warped = cv2.warpPerspective(images[i], transform, (canvas.shape[1], canvas.shape[0]))
+                canvas = self.blend_images(canvas, warped)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
-        return self.crop_black_edges(result_canvas)
+        return self.crop_black_edges(canvas)
 
     def blend_images(self, img1, img2):
         mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
@@ -133,13 +135,11 @@ class PanaromaStitcher:
         img1_bg = cv2.bitwise_and(img1, img1, mask=mask_inv)
         img2_fg = cv2.bitwise_and(img2, img2, mask=mask)
         
-        blended = cv2.add(img1_bg, img2_fg)
-        return blended
+        return cv2.add(img1_bg, img2_fg)
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
         coords = cv2.findNonZero(thresh)
         x, y, w, h = cv2.boundingRect(coords)
-        cropped_image = image[y:y+h, x:x+w]
-        return cropped_image
+        return image[y:y+h, x:x+w]
