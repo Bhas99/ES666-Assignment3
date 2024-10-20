@@ -1,22 +1,38 @@
+import glob
 import cv2
+import os
 import numpy as np
 
 class PanaromaStitcher:
-    def make_panaroma_for_images_in(self, image_list):
-        # Step 1: Detect and extract features
-        keypoints, descriptors = self.detect_and_extract_features(image_list)
+    def __init__(self):
+        pass
 
-        # Step 2: Match the features between the images
+    def make_panaroma_for_images_in(self, path):
+        imf = path
+        all_images = sorted(glob.glob(imf + os.sep + '*'))
+        print('Found {} Images for stitching'.format(len(all_images)))
+
+        # Load images
+        images = [cv2.imread(img_path) for img_path in all_images]
+        
+        # Ensure images are loaded correctly
+        if not images or len(images) < 2:
+            print("Not enough images to stitch!")
+            return None, []
+
+        # Detect and extract features
+        keypoints, descriptors = self.detect_and_extract_features(images)
+
+        # Match features between consecutive images
         matches = self.match_features(descriptors)
 
-        # Step 3: Estimate homography matrices using the matches
+        # Estimate homography matrices
         homographies = self.estimate_homographies(matches, keypoints)
 
-        # Step 4: Stitch the images using homography matrices
-        stitched_image = self.stitch_images(image_list, homographies)
+        # Stitch images together
+        stitched_image = self.stitch_images(images, homographies)
 
-        # Return the stitched panorama and the homography matrices
-        return stitched_image, homographies
+        return stitched_image, homographies 
 
     def detect_and_extract_features(self, image_list):
         sift = cv2.SIFT_create(nfeatures=500)  # Limit to 500 keypoints per image
@@ -63,8 +79,10 @@ class PanaromaStitcher:
         return homographies
 
     def stitch_images(self, images, homographies):
+        # Start with the first image as the base
         stitched_image = images[0]
         
+        # Create a larger canvas to fit the stitched result
         height, width = images[0].shape[:2]
         result_canvas = np.zeros((height * 2, width * 4, 3), dtype=np.uint8)
         result_canvas[:height, :width] = stitched_image
