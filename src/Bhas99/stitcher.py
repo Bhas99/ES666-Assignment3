@@ -19,7 +19,7 @@ class PanaromaStitcher:
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
-        sift = cv2.SIFT_create(nfeatures=800)  # Increase the number of keypoints
+        sift = cv2.SIFT_create()
         keypoints = []
         descriptors = []
         for img in image_list:
@@ -29,27 +29,12 @@ class PanaromaStitcher:
         return keypoints, descriptors
 
     def match_features(self, descriptors):
-        # Use FLANN-based matcher for faster and more accurate matching
-        index_params = dict(algorithm=1, trees=5)
-        search_params = dict(checks=100)
-        matcher = cv2.FlannBasedMatcher(index_params, search_params)
-        
+        matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
         matches = []
         for i in range(len(descriptors) - 1):
             if descriptors[i] is not None and descriptors[i + 1] is not None:
-                match = matcher.knnMatch(descriptors[i], descriptors[i + 1], k=2)
-                
-                # Apply Lowe's ratio test to retain good matches
-                good_matches = []
-                for m, n in match:
-                    if m.distance < 0.7 * n.distance:
-                        good_matches.append(m)
-                
-                # Ensure enough good matches are found
-                if len(good_matches) > 10:  # Minimum of 10 matches
-                    matches.append(good_matches)
-                else:
-                    print(f"Not enough good matches between image {i} and {i + 1}. Skipping.")
+                match = matcher.match(descriptors[i], descriptors[i + 1])
+                matches.append(sorted(match, key=lambda x: x.distance))
         return matches
 
     def estimate_homographies(self, matches, keypoints):
@@ -69,54 +54,37 @@ class PanaromaStitcher:
 
     def stitch_images(self, images, homographies):
         # Start with the first image as the base
-        base_img = images[0]
-        height, width = base_img.shape[:2]
-        
-        # Initialize canvas with a larger size
+        result = images[0]
+        height, width = images[0].shape[:2]
+
+        # Create a larger canvas to fit the stitched result
         result_canvas = np.zeros((height * 2, width * len(images), 3), dtype=np.uint8)
-        result_canvas[:height, :width] = base_img
+        result_canvas[:height, :width] = result
         
-        current_transform = np.eye(3)  # Start with an identity matrix
+        current_transform = np.eye(3)  # Start with identity matrix
         
-        # Blend each image with the canvas
         for i in range(1, len(images)):
             if i - 1 < len(homographies) and homographies[i - 1] is not None:
                 current_transform = current_transform @ homographies[i - 1]
                 
-                # Warp the next image using the cumulative transformation
+                # Warp the image using the cumulative transformation
                 warped_image = cv2.warpPerspective(images[i], current_transform, 
                                                    (result_canvas.shape[1], result_canvas.shape[0]))
                 
-                # Create masks to blend the stitched image smoothly
-                mask1 = cv2.cvtColor(result_canvas, cv2.COLOR_BGR2GRAY)
-                _, mask1 = cv2.threshold(mask1, 1, 255, cv2.THRESH_BINARY)
-                mask2 = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
-                _, mask2 = cv2.threshold(mask2, 1, 255, cv2.THRESH_BINARY)
-                
-                # Create a combined mask to determine the overlap region
-                overlap_mask = cv2.bitwise_and(mask1, mask2)
-                
-                # Blend using a weighted addition over the overlap area
-                result_canvas = self.blend_images(result_canvas, warped_image, overlap_mask)
+                # Combine the images
+                result_canvas = self.simple_blend(result_canvas, warped_image)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
-        result = self.crop_black_edges(result_canvas)
-        return result
+        # Crop out black regions
+        return self.crop_black_edges(result_canvas)
 
-    def blend_images(self, img1, img2, overlap_mask):
-        # Blending the overlapping areas
-        mask1 = cv2.bitwise_not(overlap_mask)
-        result1 = cv2.bitwise_and(img1, img1, mask=mask1)
-        result2 = cv2.bitwise_and(img2, img2, mask=overlap_mask)
-        
-        # Weighted addition to smoothen the overlapping area
-        alpha = 0.5
-        blended = cv2.addWeighted(result1, alpha, result2, 1 - alpha, 0)
-        
-        # Combining the non-overlapping parts with the blended result
-        result = cv2.add(result1, blended)
-        return result
+    def simple_blend(self, img1, img2):
+        """Simple blending by overwriting non-black areas."""
+        img1_gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+        mask = img1_gray == 0
+        img1[mask] = img2[mask]
+        return img1
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
