@@ -4,25 +4,16 @@ import os
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
-        # Step 1: Detect and extract features
         keypoints, descriptors = self.detect_and_extract_features(image_list)
-
-        # Step 2: Match the features between the images
         matches = self.match_features(descriptors)
-
-        # Step 3: Estimate homography matrices using the matches
         homographies = self.estimate_homographies(matches, keypoints)
-
-        # Step 4: Stitch the images using homography matrices
         stitched_image = self.stitch_images(image_list, homographies)
 
-        # Save the stitched image
         if stitched_image is not None:
             if not os.path.exists('./results'):
                 os.makedirs('./results')
             cv2.imwrite('./results/panorama_result.jpg', cv2.cvtColor(stitched_image, cv2.COLOR_RGB2BGR))
 
-        # Return the stitched panorama and the homography matrices
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
@@ -66,15 +57,38 @@ class PanaromaStitcher:
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
 
             # Manually compute homography using normalized DLT
-            H = self.compute_homography(src_pts, dst_pts)
+            H = self.ransac_homography(src_pts, dst_pts)
             homographies.append(H)
         return homographies
 
-    def compute_homography(self, src_pts, dst_pts):
-        """ Manually compute the homography matrix using Direct Linear Transformation (DLT) with normalization. """
-        src_pts, T_src = self.normalize_points(src_pts)
-        dst_pts, T_dst = self.normalize_points(dst_pts)
+    def ransac_homography(self, src_pts, dst_pts, threshold=5.0, max_iterations=2000):
+        max_inliers = 0
+        best_H = None
 
+        for _ in range(max_iterations):
+            # Randomly select 4 points
+            idxs = np.random.choice(len(src_pts), 4, replace=False)
+            src_random = src_pts[idxs]
+            dst_random = dst_pts[idxs]
+
+            # Compute homography for these points
+            H = self.compute_homography(src_random, dst_random)
+            if H is None:
+                continue
+
+            # Project src_pts using H and count inliers
+            projected_pts = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), H)
+            distances = np.linalg.norm(dst_pts - projected_pts.reshape(-1, 2), axis=1)
+            inliers = distances < threshold
+
+            # Track the best homography
+            if np.sum(inliers) > max_inliers:
+                max_inliers = np.sum(inliers)
+                best_H = H
+
+        return best_H
+
+    def compute_homography(self, src_pts, dst_pts):
         A = []
         for i in range(len(src_pts)):
             x, y = src_pts[i][0], src_pts[i][1]
@@ -85,24 +99,8 @@ class PanaromaStitcher:
         A = np.array(A)
         U, S, V = np.linalg.svd(A)
         H = V[-1].reshape(3, 3)
-
-        # Denormalize the homography matrix
-        H = np.linalg.inv(T_dst) @ H @ T_src
         H = H / H[2, 2]  # Normalize so that H[2,2] = 1
         return H
-
-    def normalize_points(self, pts):
-        """ Normalize points to improve homography computation. """
-        mean = np.mean(pts, axis=0)
-        std = np.std(pts)
-
-        T = np.array([
-            [1/std, 0, -mean[0]/std],
-            [0, 1/std, -mean[1]/std],
-            [0, 0, 1]
-        ])
-        normalized_pts = np.dot(T, np.concatenate((pts.T, np.ones((1, pts.shape[0]))), axis=0))
-        return normalized_pts[:2].T, T
 
     def stitch_images(self, images, homographies):
         result = images[0]
@@ -124,7 +122,7 @@ class PanaromaStitcher:
         return self.crop_black_edges(result_canvas)
 
     def blend_images(self, img1, img2):
-        """Basic blending for overlapping regions."""
+        """Blending to avoid harsh edges."""
         mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
         mask_inv = cv2.bitwise_not(mask)
