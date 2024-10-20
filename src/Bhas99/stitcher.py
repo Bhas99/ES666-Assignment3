@@ -4,19 +4,19 @@ import os
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
-        # Step 1: Pre-process images with Gaussian blur
+        # Apply Gaussian blur to each image to smoothen and reduce noise
         image_list = [cv2.GaussianBlur(img, (5, 5), 0) for img in image_list]
         
-        # Step 2: Detect and extract features
+        # Detect and extract features
         keypoints, descriptors = self.detect_and_extract_features(image_list)
         
-        # Step 3: Match features across images
+        # Match features across images
         matches = self.match_features(descriptors)
         
-        # Step 4: Estimate homographies
+        # Estimate homographies
         homographies = self.estimate_homographies(matches, keypoints)
         
-        # Step 5: Stitch images using estimated homographies
+        # Stitch images using the estimated homographies
         stitched_image = self.stitch_images(image_list, homographies)
         
         # Save the stitched image if it exists
@@ -67,12 +67,12 @@ class PanaromaStitcher:
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
 
             # Use RANSAC to compute homography
-            H = self.compute_ransac_homography(src_pts, dst_pts)
+            H, mask = self.compute_homography_ransac(src_pts, dst_pts)
             if H is not None:
                 homographies.append(H)
         return homographies
 
-    def compute_ransac_homography(self, src_pts, dst_pts):
+    def compute_homography_ransac(self, src_pts, dst_pts):
         max_inliers = 0
         best_H = None
         
@@ -128,14 +128,9 @@ class PanaromaStitcher:
         return self.crop_black_edges(canvas)
 
     def blend_images(self, img1, img2):
-        mask = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
-        mask_inv = cv2.bitwise_not(mask)
-        
-        img1_bg = cv2.bitwise_and(img1, img1, mask=mask_inv)
-        img2_fg = cv2.bitwise_and(img2, img2, mask=mask)
-        
-        return cv2.add(img1_bg, img2_fg)
+        alpha = 0.5
+        blended = cv2.addWeighted(img1, alpha, img2, 1 - alpha, 0)
+        return blended
 
     def crop_black_edges(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
