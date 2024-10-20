@@ -1,29 +1,19 @@
+from src.YourName.stitcher import PanaromaStitcher
 
-import cv2
-from Bhas99.stitcher import PanaromaStitcher  # Import your class
-import os
-
-def load_images_from_folder(folder):
-    images = []
-    for filename in os.listdir(folder):
-        img = cv2.imread(os.path.join(folder, filename))
-        if img is not None:
-            images.append(img)
-    return images
-
-if __name__ == "__main__":
-    # Load images from the Images folder
-    images = load_images_from_folder('./Users/bhaskarhazarika/Desktop/ES666-Assignment3')
-
-    # Create an instance of PanaromaStitcher
+def main():
+    # Load your images
+    images = [cv2.imread('Images/img1.jpg'), cv2.imread('Images/img2.jpg')]
+    
+    # Initialize the stitcher
     stitcher = PanaromaStitcher()
     
-    # Call the make_panaroma_for_images_in method with the loaded images
-    stitched_image, homographies = stitcher.make_panaroma_for_images_in(images)
+    # Create panorama
+    panorama, homographies = stitcher.make_panaroma_for_images_in(images)
+    
+    # Save the results
+    cv2.imwrite('./results/panorama.jpg', panorama)
+    print("Panorama created and saved!")
 
-    # Save the final stitched image
-    cv2.imwrite('./results/stitched_image.jpg', stitched_image)
+if __name__ == "__main__":
+    main()
 
-    # Print out the homography matrices for verification
-    for i, H in enumerate(homographies):
-        print(f"Homography Matrix {i+1}:\n", H)
