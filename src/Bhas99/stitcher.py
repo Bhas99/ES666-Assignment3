@@ -69,9 +69,17 @@ class PanaromaStitcher:
                 # Warp the next image onto the canvas
                 warped_image = cv2.warpPerspective(images[i], H, (result_canvas.shape[1], result_canvas.shape[0]))
                 
-                # Use a mask to blend the stitched image smoothly
-                mask = (warped_image > 0).astype(np.uint8)
-                result_canvas = cv2.add(result_canvas, warped_image, mask=mask)
+                # Create a mask to blend the stitched image smoothly
+                mask = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
+                _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+                mask_inv = cv2.bitwise_not(mask)
+                
+                # Use the mask to overlay the images correctly
+                result_canvas_bg = cv2.bitwise_and(result_canvas, result_canvas, mask=mask_inv)
+                warped_fg = cv2.bitwise_and(warped_image, warped_image, mask=mask)
+                
+                # Combine the images
+                result_canvas = cv2.add(result_canvas_bg, warped_fg)
             else:
                 print(f"Skipping image {i} due to missing homography.")
         
