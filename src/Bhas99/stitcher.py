@@ -26,7 +26,7 @@ class PanaromaStitcher:
         return stitched_image, homographies
 
     def detect_and_extract_features(self, image_list):
-        sift = cv2.SIFT_create(nfeatures=800)  # Adjust as needed
+        sift = cv2.SIFT_create(nfeatures=800)
         keypoints = []
         descriptors = []
         for img in image_list:
@@ -65,13 +65,16 @@ class PanaromaStitcher:
             src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set])
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set])
 
-            # Manually compute homography using DLT (Direct Linear Transformation)
+            # Manually compute homography using normalized DLT
             H = self.compute_homography(src_pts, dst_pts)
             homographies.append(H)
         return homographies
 
     def compute_homography(self, src_pts, dst_pts):
-        """ Manually compute the homography matrix using Direct Linear Transformation (DLT). """
+        """ Manually compute the homography matrix using Direct Linear Transformation (DLT) with normalization. """
+        src_pts, T_src = self.normalize_points(src_pts)
+        dst_pts, T_dst = self.normalize_points(dst_pts)
+
         A = []
         for i in range(len(src_pts)):
             x, y = src_pts[i][0], src_pts[i][1]
@@ -82,8 +85,24 @@ class PanaromaStitcher:
         A = np.array(A)
         U, S, V = np.linalg.svd(A)
         H = V[-1].reshape(3, 3)
+
+        # Denormalize the homography matrix
+        H = np.linalg.inv(T_dst) @ H @ T_src
         H = H / H[2, 2]  # Normalize so that H[2,2] = 1
         return H
+
+    def normalize_points(self, pts):
+        """ Normalize points to improve homography computation. """
+        mean = np.mean(pts, axis=0)
+        std = np.std(pts)
+
+        T = np.array([
+            [1/std, 0, -mean[0]/std],
+            [0, 1/std, -mean[1]/std],
+            [0, 0, 1]
+        ])
+        normalized_pts = np.dot(T, np.concatenate((pts.T, np.ones((1, pts.shape[0]))), axis=0))
+        return normalized_pts[:2].T, T
 
     def stitch_images(self, images, homographies):
         result = images[0]
