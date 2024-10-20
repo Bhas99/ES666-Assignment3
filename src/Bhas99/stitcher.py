@@ -18,40 +18,18 @@ class PanaromaStitcher:
         # Return the stitched panorama and the homography matrices
         return stitched_image, homographies
 
-    def cylindrical_projection(self, img, f):
-        """Apply cylindrical projection to an image."""
-        h, w = img.shape[:2]
-        K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])  # Intrinsic camera matrix
-        
-        # Create the cylindrical map
-        cyl = np.zeros_like(img)
-        for y in range(h):
-            for x in range(w):
-                theta = (x - w / 2) / f
-                h_ = (y - h / 2) / f
-                
-                X = np.array([np.sin(theta), h_, np.cos(theta)])
-                X = np.dot(K, X)
-                x_, y_ = int(X[0] / X[2]), int(X[1] / X[2])
-                
-                if 0 <= x_ < w and 0 <= y_ < h:
-                    cyl[y, x] = img[y_, x_]
-        
-        return cyl
-
     def detect_and_extract_features(self, image_list):
         sift = cv2.SIFT_create(nfeatures=500)  # Limit to 500 keypoints per image
         keypoints = []
         descriptors = []
         for img in image_list:
-            # Apply cylindrical projection to images
-            projected_img = self.cylindrical_projection(img, f=500)
-            kp, desc = sift.detectAndCompute(projected_img, None)
+            kp, desc = sift.detectAndCompute(img, None)
             keypoints.append(kp)
             descriptors.append(desc)
         return keypoints, descriptors
 
     def match_features(self, descriptors):
+        # Use FLANN-based matcher for faster matching
         index_params = dict(algorithm=1, trees=5)
         search_params = dict(checks=50)
         matcher = cv2.FlannBasedMatcher(index_params, search_params)
@@ -88,7 +66,7 @@ class PanaromaStitcher:
         stitched_image = images[0]
         
         height, width = images[0].shape[:2]
-        result_canvas = np.zeros((height * 2, width * 3, 3), dtype=np.uint8)
+        result_canvas = np.zeros((height * 2, width * 4, 3), dtype=np.uint8)
         result_canvas[:height, :width] = stitched_image
         
         for i in range(1, len(images)):
