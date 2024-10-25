@@ -3,7 +3,7 @@ import numpy as np
 
 class PanaromaStitcher:
     def make_panaroma_for_images_in(self, image_list):
-        # Convert images to the correct format (OpenCV expects BGR, not RGB)
+        # Convert images to the correct format 
         image_list_bgr = [cv2.cvtColor(img, cv2.COLOR_RGB2BGR) for img in image_list]
 
         # Detect and extract features
@@ -68,7 +68,7 @@ class PanaromaStitcher:
             src_pts = np.float32([keypoints[i][m.queryIdx].pt for m in match_set]).reshape(-1, 2)
             dst_pts = np.float32([keypoints[i + 1][m.trainIdx].pt for m in match_set]).reshape(-1, 2)
 
-            # Manually compute the homography using Direct Linear Transform (DLT)
+            # Manually compute the homography using Direct Linear Transform 
             H = self.compute_homography(src_pts, dst_pts)
             if H is not None:
                 homographies.append(H)
