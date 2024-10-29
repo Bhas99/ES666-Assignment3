@@ -15,7 +15,6 @@ def main():
     # List of folder names to process
     folders = ['I1', 'I2', 'I3', 'I4', 'I5', 'I6']
     
-    # Initialize the stitcher
     stitcher = PanaromaStitcher()
     
     # Loop through each folder to create panoramas
